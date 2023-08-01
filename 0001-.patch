@@ -1,0 +1,65 @@
+From 1fd92eff040721975a8c47c0ca28235c04ba633e Mon Sep 17 00:00:00 2001
+From: wangshang <wangshang@chison.com.cn>
+Date: Mon, 29 Nov 2021 08:30:27 +0800
+Subject: [PATCH] =?UTF-8?q?=E8=A7=A3=E5=86=B3=E7=BB=8F=E5=85=B8=E6=B5=8B?=
+ =?UTF-8?q?=E8=AF=95=E5=81=B6=E5=8F=91=E8=A7=A6=E6=91=B8=E5=A4=B1=E7=81=B5?=
+ =?UTF-8?q?=E9=97=AE=E9=A2=98?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+修改记录：
+背景：
+	1、在静电测试下，导致触屏部分（系统原生的控件）不可用，通过系统日志分析，根本原因是没有收到鼠标的release事件；
+	2、后经过排查，QT默认会将touch转换为mouse事件，所以造成release事件丢失的原因，是在转换时出现了问题，出现问题的原因是不满足转换条件；
+措施：
+	1、参照QT6的修改，对QGuiApplication中的鼠标转换方法进行修改；
+	2、在QEvDevTouchHandler中的reportPoints方法增加判空处理，如果点位集合为空，则不产生系统事件；理由是：空点位没有处理的必要。
+---
+ qtbase/src/gui/kernel/qguiapplication.cpp                  | 4 +++-
+ .../input/evdevtouch/qevdevtouchhandler.cpp                | 7 +++++++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/qtbase/src/gui/kernel/qguiapplication.cpp b/qtbase/src/gui/kernel/qguiapplication.cpp
+index a95331e246..8cb9029b63 100644
+--- a/qtbase/src/gui/kernel/qguiapplication.cpp
++++ b/qtbase/src/gui/kernel/qguiapplication.cpp
+@@ -3064,7 +3064,8 @@ void QGuiApplicationPrivate::processTouchEvent(QWindowSystemInterfacePrivate::To
+                 if (eventType == QEvent::TouchBegin && m_fakeMouseSourcePointId < 0)
+                     m_fakeMouseSourcePointId = touchPoints.first().id();
+                 for (const auto &touchPoint : touchPoints) {
+-                    if (touchPoint.id() == m_fakeMouseSourcePointId) {
++                    if (m_fakeMouseSourcePointId >= 0) 
++                    { // Refer to QT6 to modify the judgment logic of mouse conversion.
+                         switch (touchPoint.state()) {
+                         case Qt::TouchPointPressed:
+                             mouseEventType = QEvent::MouseButtonPress;
+@@ -3074,6 +3075,7 @@ void QGuiApplicationPrivate::processTouchEvent(QWindowSystemInterfacePrivate::To
+                             mouseEventType = QEvent::MouseButtonRelease;
+                             button = Qt::LeftButton;
+                             buttons = Qt::NoButton;
++                            Q_ASSERT(touchPoint.id() == m_fakeMouseSourcePointId);
+                             m_fakeMouseSourcePointId = -1;
+                             break;
+                         default:
+diff --git a/qtbase/src/platformsupport/input/evdevtouch/qevdevtouchhandler.cpp b/qtbase/src/platformsupport/input/evdevtouch/qevdevtouchhandler.cpp
+index f57e1540e0..7a192310d5 100644
+--- a/qtbase/src/platformsupport/input/evdevtouch/qevdevtouchhandler.cpp
++++ b/qtbase/src/platformsupport/input/evdevtouch/qevdevtouchhandler.cpp
+@@ -771,6 +771,13 @@ void QEvdevTouchScreenData::reportPoints()
+     // Map the coordinates based on the normalized position. QPA expects 'area'
+     // to be in screen coordinates.
+     const int pointCount = m_touchPoints.count();
++
++    // It is meaningless to report the empty point. 
++    if (pointCount == 0)
++    {
++        return;
++    }
++    
+     for (int i = 0; i < pointCount; ++i) {
+         QWindowSystemInterface::TouchPoint &tp(m_touchPoints[i]);
+ 
+-- 
+2.39.1.windows.1
+
